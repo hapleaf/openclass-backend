@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model ContactMessage {
+  id        Int             @id @default(autoincrement())
+  name      String
+  email     String
+  subject   String
+  message   String          @db.Text
+  isRead    Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  replies   ContactReply[]
+
+  @@index([email])
+}
+
+model ContactReply {
+  id               Int            @id @default(autoincrement())
+  contactMessageId Int
+  body             String         @db.Text
+  sentAt           DateTime       @default(now())
+  contactMessage   ContactMessage @relation(fields: [contactMessageId], references: [id], onDelete: Cascade)
+}
+
+model SessionAuditLog {
+  id        Int      @id @default(autoincrement())
+  sessionId Int
+  adminId   Int
+  field     String
+  oldValue  String?  @db.Text
+  newValue  String?  @db.Text
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
+model LoginLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ip        String?
+  userAgent String?  @db.Text
+  country   String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model User {
+  id               Int       @id @default(autoincrement())
+  sessions         Session[]
+  email            String    @unique
+  name             String?
+  password         String
+  role             String    @default("user")    // "user" | "admin"
+  disabled         Boolean   @default(false)
+  verified         Boolean   @default(false)
+  verificationCode String?
+  codeExpiresAt    DateTime?
+  createdAt        DateTime  @default(now())
+  lastLoginAt      DateTime?
+
+  // Basic profile
+  firstName        String?
+  lastName         String?
+  displayName      String?
+  gender           String?
+  primaryCategory  String?
+  title            String?
+  subject          String?
+  bio              String?   @db.Text
+  avatarUrl        String?
+  expertiseTags    String?   @db.Text
+
+  // Location
+  country          String?
+  state            String?
+  city             String?
+  timezone         String?
+
+  // Contact & social
+  phone            String?
+  linkedinUrl      String?
+  twitterUrl       String?
+  websiteUrl       String?
+  youtubeUrl       String?
+
+  // Notification preferences
+  notifySignups    Boolean   @default(true)
+  notifyReviews    Boolean   @default(true)
+  notifyReminders  Boolean   @default(true)
+  notifyDigest     Boolean   @default(false)
+  profilePublic    Boolean   @default(true)
+
+  loginLogs        LoginLog[]
+}
+
+model Category {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  sortOrder Int    @default(0)
+}
+
+model Subscription {
+  id           Int      @id @default(autoincrement())
+  subscriberId Int
+  teacherId    Int
+  createdAt    DateTime @default(now())
+  @@unique([subscriberId, teacherId])
+}
+
+model Review {
+  id         Int      @id @default(autoincrement())
+  authorId   Int
+  authorName String
+  teacherId  Int
+  sessionId  Int?
+  rating     Int
+  comment    String   @db.Text
+  createdAt  DateTime @default(now())
+}
+
+model Registration {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  sessionId Int
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  @@unique([userId, sessionId])
+}
+
+model Session {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  user            User      @relation(fields: [userId], references: [id])
+  registrations   Registration[]
+
+  type            String                    // "webinar" | "liveclass"
+  title           String
+  description     String?   @db.Text
+  bannerColor     String?
+  bannerUrl       String?
+  introVideoUrl   String?
+  category        String?
+  skillLevel      String?
+  tags            String?   @db.Text       // JSON array of strings
+
+  scheduledAt     DateTime
+  duration        Int                       // minutes
+  audienceLimit   Int?                      // null = unlimited (webinars)
+
+  visibility      String    @default("public")  // "public" | "private"
+  passcode        String?
+  inviteSlug      String?   @unique
+
+  chatEnabled     Boolean   @default(true)
+  autoRecording   Boolean   @default(true)
+  requireApproval Boolean   @default(false)
+  sendReminder    Boolean   @default(true)
+
+  status          String    @default("draft")   // "draft" | "published" | "cancelled"
+  approved        Boolean   @default(false)      // set to true by moderator team
+
+  // Session lifecycle tracking
+  sessionStatus   String?   // COMPLETED | CANCELLED | NO_SHOW | ABANDONED
+  qualityFlag     String?   // NORMAL | EARLY_COMPLETION | VERY_SHORT_SESSION | LATE_START | LOW_ATTENDANCE | HIGH_ENGAGEMENT
+  actualDuration  Int?      // minutes the session actually ran
+  actualStartAt   DateTime? // when organizer first joined
+  recordingUrl    String?   // URL to the session recording (set by organizer after session)
+  egressId        String?   // LiveKit egress ID while recording is active
+  egressActive    Boolean   @default(false) // true while egress is running
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  attendances     SessionAttendance[]
+}
+
+model SessionAttendance {
+  id        Int       @id @default(autoincrement())
+  sessionId Int
+  userId    Int
+  role      String    // "organizer" | "audience"
+  joinedAt  DateTime  @default(now())
+  leftAt    DateTime?
+
+  session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, userId])
+}
