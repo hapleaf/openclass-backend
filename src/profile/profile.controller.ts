@@ -13,23 +13,27 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { memoryStorage } from 'multer';
+import { extname } from 'path';
 import { JwtGuard } from '../auth/jwt.guard';
 import { ProfileService } from './profile.service';
+import { StorageService } from '../storage/storage.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { verifyToken } from '../helpers/jwt.helper';
 
-const UPLOAD_DIR = join(__dirname, '..', '..', 'uploads', 'avatars');
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_SIZE = 2 * 1024 * 1024;
 
 @Controller('profile')
 export class ProfileController {
-  constructor(private readonly profileService: ProfileService) {}
+  constructor(
+    private readonly profileService: ProfileService,
+    private readonly storage: StorageService,
+    private readonly config: ConfigService,
+  ) {}
 
   // ── public ────────────────────────────────────────────────────────────────
   @Get('teachers')
@@ -116,16 +120,7 @@ export class ProfileController {
   @UseGuards(JwtGuard)
   @UseInterceptors(
     FileInterceptor('avatar', {
-      storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
-          cb(null, UPLOAD_DIR);
-        },
-        filename: (_req, file, cb) => {
-          const unique = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-          cb(null, `${unique}${extname(file.originalname)}`);
-        },
-      }),
+      storage: memoryStorage(),
       limits: { fileSize: MAX_SIZE },
       fileFilter: (_req, file, cb) => {
         if (!ALLOWED_TYPES.includes(file.mimetype)) {
@@ -140,7 +135,10 @@ export class ProfileController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) throw new BadRequestException('No file uploaded');
-    const avatarUrl = `/uploads/avatars/${file.filename}`;
+    const key = `${Date.now()}-${Math.round(Math.random() * 1e6)}${extname(file.originalname)}`;
+    const bucket = this.config.get<string>('IDRIVE_S3_BUCKET_AVATARS') || 'test-avatars';
+    await this.storage.uploadFile(bucket, key, file.buffer, file.mimetype);
+    const avatarUrl = `/media/avatar/${key}`;
     return this.profileService.updateProfile(req.user.sub, { avatarUrl });
   }
 }

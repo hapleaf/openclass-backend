@@ -240,7 +240,7 @@ export class ProfileService {
       stats: {
         subscriberCount,
         avgRating: avgRating._avg.rating ? Math.round(avgRating._avg.rating * 10) / 10 : null,
-        totalSessions: sessions.length,
+        totalSessions: sessions.filter((s: { status: string; approved: boolean }) => s.status === 'published' && s.approved).length,
         totalReviews: reviews.length,
       },
       thisMonth: {
@@ -466,7 +466,7 @@ export class ProfileService {
       throw new BadRequestException(`You can submit a new review after ${formatted}`);
     }
 
-    const author = await this.prisma.user.findUnique({ where: { id: authorId } });
+    const author = await this.prisma.user.findUnique({ where: { id: authorId }, select: { firstName: true, lastName: true, name: true } });
     const authorName =
       [author?.firstName, author?.lastName].filter(Boolean).join(' ') ||
       author?.name ||

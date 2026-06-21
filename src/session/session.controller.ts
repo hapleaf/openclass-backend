@@ -1,21 +1,20 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { extname } from 'path';
+import { memoryStorage } from 'multer';
 import { JwtGuard } from '../auth/jwt.guard';
 import { SessionService } from './session.service';
+import { StorageService } from '../storage/storage.service';
 import { CreateSessionDto } from './dto/create-session.dto';
-
-const BANNER_DIR = join(__dirname, '..', '..', 'uploads', 'session-banners');
-if (!existsSync(BANNER_DIR)) mkdirSync(BANNER_DIR, { recursive: true });
-
-const VIDEO_DIR = join(__dirname, '..', '..', 'uploads', 'session-videos');
-if (!existsSync(VIDEO_DIR)) mkdirSync(VIDEO_DIR, { recursive: true });
 
 @Controller('sessions')
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly storage: StorageService,
+    private readonly config: ConfigService,
+  ) {}
 
   // ── public ────────────────────────────────────────────────────────────────
   @Get('browse')
@@ -72,37 +71,37 @@ export class SessionController {
   @Post('upload-banner')
   @UseGuards(JwtGuard)
   @UseInterceptors(FileInterceptor('banner', {
-    storage: diskStorage({
-      destination: BANNER_DIR,
-      filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${extname(file.originalname)}`),
-    }),
+    storage: memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
       if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) cb(null, true);
       else cb(new BadRequestException('Only JPG, PNG, WebP allowed'), false);
     },
   }))
-  uploadBanner(@UploadedFile() file: Express.Multer.File) {
+  async uploadBanner(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return { bannerUrl: `/uploads/session-banners/${file.filename}` };
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2)}${extname(file.originalname)}`;
+    const bucket = this.config.get<string>('IDRIVE_S3_BUCKET_BANNERS') || 'test-session-banners';
+    await this.storage.uploadFile(bucket, key, file.buffer, file.mimetype);
+    return { bannerUrl: `/media/banner/${key}` };
   }
 
   @Post('upload-intro-video')
   @UseGuards(JwtGuard)
   @UseInterceptors(FileInterceptor('video', {
-    storage: diskStorage({
-      destination: VIDEO_DIR,
-      filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}.webm`),
-    }),
+    storage: memoryStorage(),
     limits: { fileSize: 200 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
       if (file.mimetype.startsWith('video/')) cb(null, true);
       else cb(new BadRequestException('Only video files allowed'), false);
     },
   }))
-  uploadIntroVideo(@UploadedFile() file: Express.Multer.File) {
+  async uploadIntroVideo(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');
-    return { introVideoUrl: `/uploads/session-videos/${file.filename}` };
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2)}.webm`;
+    const bucket = this.config.get<string>('IDRIVE_S3_BUCKET_VIDEOS') || 'test-session-videos';
+    await this.storage.uploadFile(bucket, key, file.buffer, file.mimetype);
+    return { introVideoUrl: `/media/video/${key}` };
   }
 
   @Post(':id/recording')

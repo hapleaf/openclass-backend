@@ -1,11 +1,12 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { RecordingService } from '../recording/recording.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { randomBytes } from 'crypto';
 
 @Injectable()
 export class SessionService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private recording: RecordingService) {}
 
   async create(userId: number, dto: CreateSessionDto) {
     const inviteSlug =
@@ -71,13 +72,25 @@ export class SessionService {
     });
     if (!session) throw new NotFoundException('Session not found');
 
-    const reviews = await this.prisma.review.findMany({
-      where: { sessionId: id },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, authorName: true, rating: true, comment: true, createdAt: true },
-    });
+    const [reviews, recordings] = await Promise.all([
+      this.prisma.review.findMany({
+        where: { sessionId: id },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, authorName: true, rating: true, comment: true, createdAt: true },
+      }),
+      this.prisma.sessionRecording.findMany({
+        where: { sessionId: id },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, filename: true, s3Key: true, createdAt: true },
+      }),
+    ]);
 
-    return { ...session, reviews };
+    const recordingsWithHls = recordings.map(r => ({
+      ...r,
+      hlsUrl: r.s3Key ? this.recording.getSignedUrl(r.s3Key) : null,
+    }));
+
+    return { ...session, reviews, recordings: recordingsWithHls };
   }
 
   async toggleRegistration(userId: number, sessionId: number) {
@@ -156,10 +169,10 @@ export class SessionService {
     return this.prisma.session.delete({ where: { id } });
   }
 
-  async setRecordingUrl(sessionId: number, userId: number, recordingUrl: string) {
+  async setRecordingUrl(sessionId: number, userId: number, filename: string) {
     const session = await this.prisma.session.findUnique({ where: { id: sessionId } });
     if (!session) throw new NotFoundException('Session not found');
     if (session.userId !== userId) throw new ForbiddenException();
-    return this.prisma.session.update({ where: { id: sessionId }, data: { recordingUrl } });
+    return this.prisma.sessionRecording.create({ data: { sessionId, filename } });
   }
 }

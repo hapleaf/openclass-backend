@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,7 +11,7 @@ import {
 } from 'livekit-server-sdk';
 
 @Injectable()
-export class LiveService {
+export class LiveService implements OnModuleInit {
   private readonly captchaStore = new Map<string, { answer: number; expiresAt: number }>();
   private readonly logger = new Logger(LiveService.name);
 
@@ -19,6 +19,42 @@ export class LiveService {
     private prisma: PrismaService,
     private config: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    if (!this.isEgressConfigured()) return;
+    const active = await this.prisma.session.findMany({
+      where: { egressActive: true },
+      select: { id: true, duration: true, actualStartAt: true },
+    });
+    if (!active.length) return;
+    const maxMinutes = Number(this.config.get<string>('MAX_EGRESS_DURATION_MINUTES') || 120);
+    for (const s of active) {
+      const startedAt = s.actualStartAt ?? new Date();
+      const elapsedMin = (Date.now() - startedAt.getTime()) / 60_000;
+      const capMinutes = Math.min(s.duration + 10, maxMinutes);
+      const remainingMs = (capMinutes - elapsedMin) * 60_000;
+      if (remainingMs <= 0) {
+        this.logger.warn(`Session ${s.id} egress overdue on startup — stopping now`);
+        this._stopEgressForSession(s.id);
+      } else {
+        this.logger.log(`Session ${s.id} egress re-armed: stops in ${Math.round(remainingMs / 60_000)} min`);
+        setTimeout(() => this._stopEgressForSession(s.id), remainingMs);
+      }
+    }
+  }
+
+  private async _stopEgressForSession(sessionId: number) {
+    try {
+      const egresses = await this.egressClient().listEgress({ roomName: `session-${sessionId}`, active: true });
+      if (egresses.length) {
+        await Promise.all(egresses.map(e => this.egressClient().stopEgress(e.egressId)));
+        this.logger.log(`Auto-stopped egress for session ${sessionId}`);
+      }
+      await this.prisma.session.update({ where: { id: sessionId }, data: { egressActive: false, egressId: null } });
+    } catch (err) {
+      this.logger.warn(`Could not auto-stop egress for session ${sessionId}: ${(err as Error).message}`);
+    }
+  }
 
   private egressClient(): EgressClient {
     const apiKey    = this.config.get<string>('LIVEKIT_API_KEY')    ?? 'devkey';
@@ -74,25 +110,11 @@ export class LiveService {
         data: { egressId: egress.egressId, egressActive: true },
       });
 
-      // Auto-stop after session duration + 10 min buffer, measured from when the
-      // organiser first joined (now). endSession() will stop it sooner if pressed.
-      // This timer is lost on server restart; a persistent job queue would be
-      // needed to survive restarts.
-      const stopAfterMs = (duration + 10) * 60 * 1000;
-      setTimeout(async () => {
-        try {
-          const egresses = await this.egressClient().listEgress({
-            roomName: `session-${sessionId}`,
-            active: true,
-          });
-          if (egresses.length) {
-            await Promise.all(egresses.map((e) => this.egressClient().stopEgress(e.egressId)));
-            this.logger.log(`Auto-stopped egress for session ${sessionId} after ${duration + 10} min`);
-          }
-        } catch (err) {
-          this.logger.warn(`Could not auto-stop egress for session ${sessionId}: ${(err as Error).message}`);
-        }
-      }, stopAfterMs);
+      // Hard cap: never record beyond MAX_EGRESS_DURATION_MINUTES (default 120).
+      // endSession() will stop it sooner if pressed.
+      const maxMinutes = Number(this.config.get<string>('MAX_EGRESS_DURATION_MINUTES') || 120);
+      const stopAfterMinutes = Math.min(duration + 10, maxMinutes);
+      setTimeout(() => this._stopEgressForSession(sessionId), stopAfterMinutes * 60_000);
     } catch (err) {
       const e = err as Error & { code?: unknown; details?: unknown; metadata?: unknown };
       this.logger.error(
@@ -286,50 +308,47 @@ export class LiveService {
     return { sessionStatus: 'CANCELLED' };
   }
 
-  // ── Recording — poll egress status, save URL when done ────────────────────
-  async getRecording(sessionId: number): Promise<{ recordingUrl: string | null; processing: boolean }> {
-    const session = await this.prisma.session.findUnique({ where: { id: sessionId } });
+  // ── Recording — poll egress status, save filename when done ──────────────
+  async getRecording(sessionId: number): Promise<{ recordings: string[]; processing: boolean }> {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { recordings: { orderBy: { createdAt: 'asc' } } },
+    });
     if (!session) throw new NotFoundException();
 
-    // Already saved
-    if (session.recordingUrl) return { recordingUrl: session.recordingUrl, processing: false };
+    // Already have recordings saved
+    if (session.recordings.length > 0) {
+      return { recordings: session.recordings.map((r: { filename: string }) => r.filename), processing: false };
+    }
 
     // Not an auto-recording session, or no status yet
     if (!session.autoRecording || !session.sessionStatus) {
-      return { recordingUrl: null, processing: false };
+      return { recordings: [], processing: false };
     }
 
     try {
       const egresses = await this.egressClient().listEgress({ roomName: `session-${sessionId}` });
       const done = egresses.find(e => e.status === EgressStatus.EGRESS_COMPLETE);
       if (!done) {
-        // ENDING = stopEgress() called but file still encoding (30-60s delay)
         const running = egresses.some(e =>
           e.status === EgressStatus.EGRESS_ACTIVE ||
           e.status === EgressStatus.EGRESS_STARTING ||
           e.status === EgressStatus.EGRESS_ENDING,
         );
-        return { recordingUrl: null, processing: running };
+        return { recordings: [], processing: running };
       }
 
-      // Extract the file URL from the completed egress
-      let url: string | null = null;
       const fileResult = done.fileResults?.[0];
       if (fileResult?.location) {
-        url = fileResult.location;
-        // If it's a local path (no protocol), build a URL from BACKEND_URL
-        if (!url.startsWith('http')) {
-          const backendUrl = this.config.get<string>('BACKEND_URL') ?? 'http://localhost:3002';
-          const filename = url.split('/').pop();
-          url = `${backendUrl}/uploads/recordings/${filename}`;
-        }
-        await this.prisma.session.update({ where: { id: sessionId }, data: { recordingUrl: url } });
+        const filename = fileResult.location.split('/').pop()!;
+        await this.prisma.sessionRecording.create({ data: { sessionId, filename } });
+        return { recordings: [filename], processing: false };
       }
 
-      return { recordingUrl: url, processing: false };
+      return { recordings: [], processing: false };
     } catch (err) {
       this.logger.warn(`Could not fetch egress list for session ${sessionId}: ${(err as Error).message}`);
-      return { recordingUrl: null, processing: false };
+      return { recordings: [], processing: false };
     }
   }
 
@@ -358,18 +377,15 @@ export class LiveService {
     const fileResult = info.fileResults?.[0];
     if (!fileResult?.location) return;
 
-    let url = fileResult.location;
-    if (!url.startsWith('http')) {
-      const backendUrl = this.config.get<string>('BACKEND_URL') ?? 'http://localhost:3002';
-      const filename = url.split('/').pop();
-      url = `${backendUrl}/uploads/recordings/${filename}`;
-    }
+    const filename = fileResult.location.split('/').pop();
+    if (!filename) return;
 
+    await this.prisma.sessionRecording.create({ data: { sessionId, filename } });
     await this.prisma.session.update({
       where: { id: sessionId },
-      data: { recordingUrl: url, egressActive: false, egressId: null },
+      data: { egressActive: false, egressId: null },
     });
-    this.logger.log(`Recording saved for session ${sessionId}: ${url}`);
+    this.logger.log(`Recording saved for session ${sessionId}: ${filename}`);
   }
 
   // ── Status ─────────────────────────────────────────────────────────────────

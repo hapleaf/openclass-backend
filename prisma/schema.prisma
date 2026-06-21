@@ -175,7 +175,6 @@ model Session {
   qualityFlag     String?   // NORMAL | EARLY_COMPLETION | VERY_SHORT_SESSION | LATE_START | LOW_ATTENDANCE | HIGH_ENGAGEMENT
   actualDuration  Int?      // minutes the session actually ran
   actualStartAt   DateTime? // when organizer first joined
-  recordingUrl    String?   // URL to the session recording (set by organizer after session)
   egressId        String?   // LiveKit egress ID while recording is active
   egressActive    Boolean   @default(false) // true while egress is running
 
@@ -183,6 +182,19 @@ model Session {
   updatedAt       DateTime  @updatedAt
 
   attendances     SessionAttendance[]
+  recordings      SessionRecording[]
+}
+
+model SessionRecording {
+  id           Int      @id @default(autoincrement())
+  sessionId    Int
+  session      Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  filename     String
+  uploadedToS3 Boolean  @default(false)
+  s3Key        String?  // e.g. "session-80/hls-1/index.m3u8" — set after upload
+  createdAt    DateTime @default(now())
+
+  @@index([sessionId])
 }
 
 model SessionAttendance {
