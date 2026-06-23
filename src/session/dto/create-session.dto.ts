@@ -46,6 +46,15 @@ export class CreateSessionDto {
   @IsOptional() @IsBoolean()
   sendReminder?: boolean;
 
+  @IsOptional() @IsBoolean()
+  chatEnabled?: boolean;
+
+  @IsOptional() @IsBoolean()
+  autoRecording?: boolean;
+
+  @IsOptional() @IsBoolean()
+  requireApproval?: boolean;
+
   @IsOptional() @IsIn(['draft', 'published'])
   status?: string;
 }
