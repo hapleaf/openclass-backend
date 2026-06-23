@@ -102,6 +102,7 @@ model User {
   profilePublic    Boolean   @default(true)
 
   loginLogs        LoginLog[]
+  supportTickets   SupportTicket[]
 }
 
 model Category {
@@ -208,4 +209,34 @@ model SessionAttendance {
   session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, userId])
+}
+
+model SupportTicket {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String
+  category  String?
+  message   String           @db.Text
+  status    String           @default("OPEN")     // OPEN | IN_PROGRESS | RESOLVED | CLOSED
+  priority  String           @default("NORMAL")   // LOW | NORMAL | HIGH | URGENT
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  replies   SupportReply[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SupportReply {
+  id        Int           @id @default(autoincrement())
+  ticketId  Int
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  Int?
+  isAdmin   Boolean       @default(false)
+  message   String        @db.Text
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId])
 }

@@ -276,6 +276,98 @@ export class MailService {
     });
   }
 
+  async sendNewSupportTicket(
+    adminEmail: string,
+    ticketId: number,
+    subject: string,
+    message: string,
+    userName: string,
+    userEmail: string,
+  ) {
+    const from = process.env.FROM_EMAIL || `noreply@localhost`;
+    const adminUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin`;
+    const escaped = message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>');
+
+    const body = `
+      ${heading('🎫', `New support ticket #${ticketId}`)}
+      ${para(`A new support ticket has been submitted on OpenWebinar.`)}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+        <tr>
+          <td style="background-color:${BRAND.cream};border-left:4px solid ${BRAND.leaf};border-radius:0 10px 10px 0;padding:16px 20px;">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND.muted};">Subject</p>
+            <p style="margin:0 0 12px;font-size:16px;font-weight:700;color:${BRAND.ink};">${subject}</p>
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND.muted};">From</p>
+            <p style="margin:0;font-size:14px;color:${BRAND.ink};">${userName} &lt;${userEmail}&gt;</p>
+          </td>
+        </tr>
+      </table>
+      <div style="background-color:${BRAND.cream};border-left:3px solid ${BRAND.border};border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 20px;">
+        <p style="margin:0;font-size:15px;line-height:1.7;color:${BRAND.ink};">${escaped}</p>
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">
+        <tr>
+          <td style="border-radius:10px;background-color:${BRAND.leaf};">
+            <a href="${adminUrl}" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:${BRAND.white};text-decoration:none;font-family:Georgia,serif;">View in Admin Panel →</a>
+          </td>
+        </tr>
+      </table>
+    `;
+
+    const html = baseTemplate(`New support ticket #${ticketId}: ${subject}`, body);
+    return this.transporter.sendMail({
+      from: `"OpenWebinar Support" <${from}>`,
+      to: adminEmail,
+      subject: `[Ticket #${ticketId}] ${subject}`,
+      html,
+    });
+  }
+
+  async sendSupportReplyToUser(
+    userEmail: string,
+    userName: string,
+    ticketId: number,
+    subject: string,
+    replyMessage: string,
+  ) {
+    const from = process.env.FROM_EMAIL || `noreply@localhost`;
+    const firstName = userName.split(' ')[0] || 'there';
+    const supportUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/support/${ticketId}`;
+    const escaped = replyMessage.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br/>');
+
+    const body = `
+      ${heading('💬', `Reply to your support ticket`)}
+      ${para(`Hi ${firstName}, the OpenWebinar team has responded to your support ticket.`)}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">
+        <tr>
+          <td style="background-color:${BRAND.cream};border-radius:8px;padding:10px 16px;">
+            <p style="margin:0;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND.muted};">Ticket #${ticketId} — ${subject}</p>
+          </td>
+        </tr>
+      </table>
+      <div style="background-color:${BRAND.cream};border-left:3px solid ${BRAND.leaf};border-radius:0 8px 8px 0;padding:16px 20px;margin:0 0 20px;">
+        <p style="margin:0;font-size:15px;line-height:1.7;color:${BRAND.ink};">${escaped}</p>
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">
+        <tr>
+          <td style="border-radius:10px;background-color:${BRAND.leaf};">
+            <a href="${supportUrl}" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:${BRAND.white};text-decoration:none;font-family:Georgia,serif;">View Full Conversation →</a>
+          </td>
+        </tr>
+      </table>
+      ${divider()}
+      ${smallNote('You can reply directly in the support portal or respond to this email.')}
+    `;
+
+    const html = baseTemplate(`Reply to your support ticket: ${subject}`, body);
+    return this.transporter.sendMail({
+      from: `"OpenWebinar Support" <${from}>`,
+      to: userEmail,
+      replyTo: from,
+      subject: `Re: [Ticket #${ticketId}] ${subject}`,
+      html,
+    });
+  }
+
   async sendPasswordReset(email: string, name: string | null | undefined, code: string) {
     const from = process.env.FROM_EMAIL || `noreply@localhost`;
     const firstName = name?.split(' ')[0] || 'there';
