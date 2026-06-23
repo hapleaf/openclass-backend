@@ -13,8 +13,10 @@ import { ContactModule } from './contact/contact.module';
 import { RecordingModule } from './recording/recording.module';
 import { StorageModule } from './storage/storage.module';
 import { SupportModule } from './support/support.module';
+import { MessagesModule } from './messages/messages.module';
+import { AnnouncementsModule } from './announcements/announcements.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), ScheduleModule.forRoot(), PrismaModule, MailModule, AuthModule, StorageModule, ProfileModule, SessionModule, CategoryModule, LiveModule, AdminModule, ContactModule, RecordingModule, SupportModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), ScheduleModule.forRoot(), PrismaModule, MailModule, AuthModule, StorageModule, ProfileModule, SessionModule, CategoryModule, LiveModule, AdminModule, ContactModule, RecordingModule, SupportModule, MessagesModule, AnnouncementsModule],
 })
 export class AppModule {}

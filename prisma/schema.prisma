@@ -101,8 +101,41 @@ model User {
   notifyDigest     Boolean   @default(false)
   profilePublic    Boolean   @default(true)
 
-  loginLogs        LoginLog[]
-  supportTickets   SupportTicket[]
+  loginLogs           LoginLog[]
+  supportTickets      SupportTicket[]
+  conversationsA      Conversation[]       @relation("ConvUserA")
+  conversationsB      Conversation[]       @relation("ConvUserB")
+  sentMessages        Message[]            @relation("MsgSender")
+  announcements       Announcement[]       @relation("SpeakerAnnouncements")
+  announcementReads   AnnouncementRead[]
+}
+
+model Conversation {
+  id        Int       @id @default(autoincrement())
+  userAId   Int
+  userBId   Int
+  userA     User      @relation("ConvUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB     User      @relation("ConvUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@unique([userAId, userBId])
+  @@index([updatedAt])
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       Int
+  sender         User         @relation("MsgSender", fields: [senderId], references: [id], onDelete: Cascade)
+  content        String       @db.Text
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([readAt])
 }
 
 model Category {
@@ -209,6 +242,28 @@ model SessionAttendance {
   session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, userId])
+}
+
+model Announcement {
+  id        Int                @id @default(autoincrement())
+  speakerId Int
+  speaker   User               @relation("SpeakerAnnouncements", fields: [speakerId], references: [id], onDelete: Cascade)
+  title     String?
+  content   String             @db.Text
+  createdAt DateTime           @default(now())
+  reads     AnnouncementRead[]
+
+  @@index([speakerId, createdAt])
+}
+
+model AnnouncementRead {
+  userId         Int
+  announcementId Int
+  readAt         DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, announcementId])
 }
 
 model SupportTicket {
