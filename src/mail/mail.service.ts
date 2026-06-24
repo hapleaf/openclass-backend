@@ -19,7 +19,7 @@ function baseTemplate(preheader: string, bodyContent: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
-  <title>OpenClass</title>
+  <title>OpenWebinar</title>
 </head>
 <body style="margin:0;padding:0;background-color:${BRAND.cream};font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
 
@@ -39,7 +39,7 @@ function baseTemplate(preheader: string, bodyContent: string): string {
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="background-color:${BRAND.leaf};border-radius:14px;padding:10px 22px;">
-                    <span style="font-size:20px;font-weight:700;color:${BRAND.white};letter-spacing:-0.5px;font-family:Georgia,serif;">OpenClass</span>
+                    <span style="font-size:20px;font-weight:700;color:${BRAND.white};letter-spacing:-0.5px;font-family:Georgia,serif;">OpenWebinar</span>
                   </td>
                 </tr>
               </table>
@@ -73,10 +73,10 @@ function baseTemplate(preheader: string, bodyContent: string): string {
           <tr>
             <td align="center" style="padding-top:28px;">
               <p style="margin:0 0 6px;font-size:12px;color:${BRAND.muted};line-height:1.6;">
-                You're receiving this email because you signed up for OpenClass.
+                You're receiving this email because you signed up for OpenWebinar.
               </p>
               <p style="margin:0;font-size:12px;color:${BRAND.muted};">
-                &copy; ${new Date().getFullYear()} OpenClass &mdash; Live Learning Platform
+                &copy; ${new Date().getFullYear()} OpenWebinar &mdash; Live Webinar Platform
               </p>
             </td>
           </tr>
@@ -152,17 +152,17 @@ export class MailService {
 
     const body = `
       ${heading('🎓', 'Verify your email address')}
-      ${para(`Hey ${firstName}, welcome to <strong>OpenClass</strong>! We're excited to have you join our live learning community.`)}
+      ${para(`Hey ${firstName}, welcome to <strong>OpenWebinar</strong>! We're excited to have you join our live webinar community.`)}
       ${para(`Use the verification code below to confirm your email address and activate your account:`)}
       ${codeBlock(code)}
       ${para(`This code expires in <strong>30 minutes</strong>. Enter it on the verification screen to get started.`)}
       ${divider()}
       ${pill('Security tip')}
-      ${smallNote('OpenClass will never ask for this code over the phone or by email. If you didn\'t create an account, you can safely ignore this message.')}
+      ${smallNote('OpenWebinar will never ask for this code over the phone or by email. If you didn\'t create an account, you can safely ignore this message.')}
     `;
 
-    const html = baseTemplate(`Your OpenClass verification code is ${code}`, body);
-    return this.transporter.sendMail({ from, to: email, subject: `${code} is your OpenClass verification code`, html });
+    const html = baseTemplate(`Your OpenWebinar verification code is ${code}`, body);
+    return this.transporter.sendMail({ from, to: email, subject: `${code} is your OpenWebinar verification code`, html });
   }
 
   async sendContactReply(to: string, recipientName: string, originalSubject: string, replyBody: string) {
@@ -177,12 +177,12 @@ export class MailService {
         <p style="margin:0;font-size:15px;line-height:1.7;color:${BRAND.ink};">${escaped}</p>
       </div>
       ${divider()}
-      ${smallNote('This is a reply from the OpenClass team. You can reply directly to this email to continue the conversation.')}
+      ${smallNote('This is a reply from the OpenWebinar team. You can reply directly to this email to continue the conversation.')}
     `;
 
     const html = baseTemplate(`Re: ${originalSubject}`, body);
     return this.transporter.sendMail({
-      from: `"OpenClass Team" <${from}>`,
+      from: `"OpenWebinar Team" <${from}>`,
       to,
       replyTo: from,
       subject: `Re: ${originalSubject}`,
@@ -197,7 +197,7 @@ export class MailService {
 
     const body = `
       ${heading('🎉', 'Your session is approved!')}
-      ${para(`Hi ${firstName}, great news — your session has been reviewed and approved by the OpenClass team.`)}
+      ${para(`Hi ${firstName}, great news — your session has been reviewed and approved by the OpenWebinar team.`)}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;">
         <tr>
           <td style="background-color:${BRAND.cream};border-left:4px solid ${BRAND.leaf};border-radius:0 10px 10px 0;padding:16px 20px;">
@@ -206,7 +206,7 @@ export class MailService {
           </td>
         </tr>
       </table>
-      ${para(`Your session is now <strong>live and discoverable</strong> by students on OpenClass. Share the link to spread the word!`)}
+      ${para(`Your session is now <strong>live and discoverable</strong> by attendees on OpenWebinar. Share the link to spread the word!`)}
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0;">
         <tr>
           <td style="border-radius:10px;background-color:${BRAND.leaf};">
@@ -215,14 +215,14 @@ export class MailService {
         </tr>
       </table>
       ${divider()}
-      ${smallNote('You\'ll receive notifications when students register for your session. Questions? Reply to this email and we\'ll help.')}
+      ${smallNote('You\'ll receive notifications when attendees register for your session. Questions? Reply to this email and we\'ll help.')}
     `;
 
     const html = baseTemplate(`Your session "${sessionTitle}" has been approved`, body);
     return this.transporter.sendMail({
-      from: `"OpenClass Team" <${from}>`,
+      from: `"OpenWebinar Team" <${from}>`,
       to: email,
-      subject: `✅ "${sessionTitle}" is approved and live on OpenClass`,
+      subject: `✅ "${sessionTitle}" is approved and live on OpenWebinar`,
       html,
     });
   }
@@ -269,9 +269,9 @@ export class MailService {
 
     const html = baseTemplate(`Action needed on your session "${sessionTitle}"`, body);
     return this.transporter.sendMail({
-      from: `"OpenClass Team" <${from}>`,
+      from: `"OpenWebinar Team" <${from}>`,
       to: email,
-      subject: `📋 Action needed: "${sessionTitle}" on OpenClass`,
+      subject: `📋 Action needed: "${sessionTitle}" on OpenWebinar`,
       html,
     });
   }
@@ -374,7 +374,7 @@ export class MailService {
 
     const body = `
       ${heading('🔐', 'Reset your password')}
-      ${para(`Hi ${firstName}, we received a request to reset the password for your OpenClass account.`)}
+      ${para(`Hi ${firstName}, we received a request to reset the password for your OpenWebinar account.`)}
       ${para(`Enter the code below on the password reset screen:`)}
       ${codeBlock(code)}
       ${para(`This code expires in <strong>30 minutes</strong>.`)}
@@ -383,7 +383,7 @@ export class MailService {
       ${smallNote('If you didn\'t ask to reset your password, your account is safe — you can ignore this email. No changes have been made.')}
     `;
 
-    const html = baseTemplate(`Your OpenClass password reset code is ${code}`, body);
-    return this.transporter.sendMail({ from, to: email, subject: 'Reset your OpenClass password', html });
+    const html = baseTemplate(`Your OpenWebinar password reset code is ${code}`, body);
+    return this.transporter.sendMail({ from, to: email, subject: 'Reset your OpenWebinar password', html });
   }
 }
