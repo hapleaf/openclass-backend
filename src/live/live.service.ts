@@ -59,7 +59,7 @@ export class LiveService implements OnModuleInit {
   private egressClient(): EgressClient {
     const apiKey    = this.config.get<string>('LIVEKIT_API_KEY')    ?? 'devkey';
     const apiSecret = this.config.get<string>('LIVEKIT_API_SECRET') ?? 'secret';
-    const lkUrl     = this.config.get<string>('LIVEKIT_URL')        ?? 'ws://localhost:7880';
+    const lkUrl     = this.config.get<string>('LIVEKIT_SERVER_URL_FOR_EGRESS')        ?? 'ws://localhost:7880';
     // EgressClient uses HTTP, convert ws(s):// → http(s)://
     const httpUrl = lkUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
     return new EgressClient(httpUrl, apiKey, apiSecret);
