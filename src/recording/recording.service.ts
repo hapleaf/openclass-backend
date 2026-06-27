@@ -556,7 +556,7 @@ export class RecordingService implements OnModuleInit {
       },
     });
 
-    return logs.map(l => ({
+    return logs.map((l: typeof logs[number]) => ({
       ...l,
       fileSizeBytes: l.fileSizeBytes ? Number(l.fileSizeBytes) : null,
     }));
