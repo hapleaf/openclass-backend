@@ -217,6 +217,7 @@ model Session {
 
   attendances     SessionAttendance[]
   recordings      SessionRecording[]
+  egressLogs      EgressLog[]
 }
 
 model SessionRecording {
@@ -264,6 +265,49 @@ model AnnouncementRead {
   announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
 
   @@unique([userId, announcementId])
+}
+
+model EgressLog {
+  id                  Int       @id @default(autoincrement())
+  sessionId           Int
+  session             Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  egressId            String    @unique   // LiveKit egress ID — globally unique
+  roomId              String?
+  roomName            String?
+
+  // Status lifecycle: EGRESS_STARTING → EGRESS_ACTIVE → EGRESS_ENDING → EGRESS_COMPLETE / EGRESS_FAILED / EGRESS_ABORTED
+  status              String    @default("EGRESS_STARTING")
+
+  // Who pressed "Start Recording"
+  triggeredByUserId   Int?
+  triggeredByName     String?
+
+  // Timing (converted from LiveKit nanoseconds to DateTime)
+  recordingStartedAt  DateTime? // set on egress_started
+  recordingEndedAt    DateTime? // set on egress_ended
+  lkUpdatedAt         DateTime? // LiveKit's updatedAt heartbeat
+
+  // File output (populated on egress_ended for COMPLETE status)
+  filename            String?
+  fileSizeBytes       BigInt?
+  fileDurationSec     Int?
+  fileLocation        String?   // local path or S3 URL
+
+  // Failure details (populated on egress_ended for FAILED/ABORTED status)
+  error               String?   @db.Text
+  errorCode           Int?
+  details             String?   @db.Text
+
+  // LiveKit metadata
+  retryCount          Int       @default(0)
+  backupStorageUsed   Boolean   @default(false)
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([sessionId])
+  @@index([createdAt])
 }
 
 model SupportTicket {

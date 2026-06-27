@@ -539,4 +539,26 @@ export class RecordingService implements OnModuleInit {
 
     return { created, skipped, rows };
   }
+
+  async getEgressLogs(statusFilter?: string): Promise<object[]> {
+    const where = statusFilter && statusFilter !== 'all'
+      ? { status: statusFilter }
+      : {};
+
+    const logs = await this.prisma.egressLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: {
+        session: {
+          select: { id: true, title: true, scheduledAt: true },
+        },
+      },
+    });
+
+    return logs.map(l => ({
+      ...l,
+      fileSizeBytes: l.fileSizeBytes ? Number(l.fileSizeBytes) : null,
+    }));
+  }
 }

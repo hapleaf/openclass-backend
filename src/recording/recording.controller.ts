@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 
 import { RecordingService } from './recording.service';
 import { StorageService } from '../storage/storage.service';
@@ -72,5 +72,10 @@ export class RecordingController {
   @Get('system')
   getSystemStats() {
     return this.recording.getSystemStats();
+  }
+
+  @Get('egress-logs')
+  getEgressLogs(@Query('status') status?: string) {
+    return this.recording.getEgressLogs(status);
   }
 }

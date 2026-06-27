@@ -90,7 +90,13 @@ export class LiveService implements OnModuleInit {
     return enabled === 'true' || !!(bucket && accessKey && secret);
   }
 
-  private async startRecording(sessionId: number, duration: number): Promise<void> {
+  // Convert LiveKit nanosecond timestamp (bigint) to Date, returns null for zero/missing
+  private nanoToDate(ns: bigint | undefined): Date | null {
+    if (!ns || ns === 0n) return null;
+    return new Date(Number(ns / 1_000_000n));
+  }
+
+  private async startRecording(sessionId: number, duration: number, triggeredByUserId?: number): Promise<void> {
     if (!this.isEgressConfigured()) {
       this.logger.debug(`Egress not configured — skipping auto-recording for session ${sessionId}`);
       return;
@@ -108,6 +114,26 @@ export class LiveService implements OnModuleInit {
       await this.prisma.session.update({
         where: { id: sessionId },
         data: { egressId: egress.egressId, egressActive: true },
+      });
+
+      // Resolve triggered-by name for the log
+      let triggeredByName: string | undefined;
+      if (triggeredByUserId) {
+        const u = await this.prisma.user.findUnique({ where: { id: triggeredByUserId }, select: { firstName: true, lastName: true, name: true } });
+        if (u) triggeredByName = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.name || undefined;
+      }
+
+      // Create EgressLog row — will be updated by webhook events
+      await this.prisma.egressLog.create({
+        data: {
+          sessionId,
+          egressId: egress.egressId,
+          roomId: egress.roomId,
+          roomName: egress.roomName,
+          status: 'EGRESS_STARTING',
+          triggeredByUserId: triggeredByUserId ?? null,
+          triggeredByName: triggeredByName ?? null,
+        },
       });
 
       // Hard cap: never record beyond MAX_EGRESS_DURATION_MINUTES (default 120).
@@ -234,7 +260,7 @@ export class LiveService implements OnModuleInit {
     if (session.userId !== userId) throw new ForbiddenException('Only the organizer can start recording');
     if (!this.isEgressConfigured()) throw new ForbiddenException('Recording is not configured on this server');
     if (session.egressActive) throw new BadRequestException('Recording is already in progress for this session');
-    await this.startRecording(sessionId, session.duration);
+    await this.startRecording(sessionId, session.duration, userId);
     return { ok: true };
   }
 
@@ -352,7 +378,7 @@ export class LiveService implements OnModuleInit {
     }
   }
 
-  // ── LiveKit webhook — saves recording URL on egress_ended ──────────────────
+  // ── LiveKit webhook — handles egress_started / egress_updated / egress_ended ─
   async handleWebhook(rawBody: string, authorization: string | undefined): Promise<void> {
     const apiKey    = this.config.get<string>('LIVEKIT_API_KEY')    ?? 'devkey';
     const apiSecret = this.config.get<string>('LIVEKIT_API_SECRET') ?? 'secret';
@@ -365,27 +391,124 @@ export class LiveService implements OnModuleInit {
       return;
     }
 
-    if (event.event !== 'egress_ended') return;
-    const info = event.egressInfo;
-    if (!info || info.status !== EgressStatus.EGRESS_COMPLETE) return;
+    const egress = ['egress_started', 'egress_updated', 'egress_ended'];
+    if (!egress.includes(event.event)) return;
 
-    // Resolve sessionId from room name "session-{id}"
+    const info = event.egressInfo;
+    if (!info?.egressId) return;
+
     const match = info.roomName?.match(/^session-(\d+)$/);
     if (!match) return;
     const sessionId = parseInt(match[1], 10);
 
-    const fileResult = info.fileResults?.[0];
-    if (!fileResult?.location) return;
+    const statusName = EgressStatus[info.status] ?? 'EGRESS_UNKNOWN';
 
-    const filename = fileResult.location.split('/').pop();
-    if (!filename) return;
+    if (event.event === 'egress_started') {
+      await this.prisma.egressLog.upsert({
+        where: { egressId: info.egressId },
+        update: {
+          status: statusName,
+          recordingStartedAt: this.nanoToDate(info.startedAt),
+          lkUpdatedAt: this.nanoToDate(info.updatedAt),
+          roomId: info.roomId,
+          roomName: info.roomName,
+        },
+        create: {
+          sessionId,
+          egressId: info.egressId,
+          roomId: info.roomId,
+          roomName: info.roomName,
+          status: statusName,
+          recordingStartedAt: this.nanoToDate(info.startedAt),
+          lkUpdatedAt: this.nanoToDate(info.updatedAt),
+        },
+      });
+      this.logger.log(`Egress ACTIVE for session ${sessionId} | egressId=${info.egressId}`);
+      return;
+    }
 
-    await this.prisma.sessionRecording.create({ data: { sessionId, filename } });
-    await this.prisma.session.update({
-      where: { id: sessionId },
-      data: { egressActive: false, egressId: null },
-    });
-    this.logger.log(`Recording saved for session ${sessionId}: ${filename}`);
+    if (event.event === 'egress_updated') {
+      await this.prisma.egressLog.upsert({
+        where: { egressId: info.egressId },
+        update: {
+          status: statusName,
+          lkUpdatedAt: this.nanoToDate(info.updatedAt),
+          retryCount: info.retryCount ?? 0,
+        },
+        create: {
+          sessionId,
+          egressId: info.egressId,
+          roomId: info.roomId,
+          roomName: info.roomName,
+          status: statusName,
+          lkUpdatedAt: this.nanoToDate(info.updatedAt),
+          retryCount: info.retryCount ?? 0,
+        },
+      });
+      return;
+    }
+
+    // egress_ended — full details available
+    if (event.event === 'egress_ended') {
+      const fileResult = info.fileResults?.[0];
+      const isComplete = info.status === EgressStatus.EGRESS_COMPLETE;
+
+      await this.prisma.egressLog.upsert({
+        where: { egressId: info.egressId },
+        update: {
+          status: statusName,
+          recordingStartedAt: this.nanoToDate(info.startedAt),
+          recordingEndedAt: this.nanoToDate(info.endedAt),
+          lkUpdatedAt: this.nanoToDate(info.updatedAt),
+          retryCount: info.retryCount ?? 0,
+          backupStorageUsed: info.backupStorageUsed ?? false,
+          filename: fileResult?.filename ?? null,
+          fileSizeBytes: fileResult?.size ?? null,
+          fileDurationSec: fileResult?.duration ? Number(fileResult.duration) : null,
+          fileLocation: fileResult?.location ?? null,
+          error: info.error || null,
+          errorCode: info.errorCode || null,
+          details: info.details || null,
+        },
+        create: {
+          sessionId,
+          egressId: info.egressId,
+          roomId: info.roomId,
+          roomName: info.roomName,
+          status: statusName,
+          recordingStartedAt: this.nanoToDate(info.startedAt),
+          recordingEndedAt: this.nanoToDate(info.endedAt),
+          lkUpdatedAt: this.nanoToDate(info.updatedAt),
+          retryCount: info.retryCount ?? 0,
+          backupStorageUsed: info.backupStorageUsed ?? false,
+          filename: fileResult?.filename ?? null,
+          fileSizeBytes: fileResult?.size ?? null,
+          fileDurationSec: fileResult?.duration ? Number(fileResult.duration) : null,
+          fileLocation: fileResult?.location ?? null,
+          error: info.error || null,
+          errorCode: info.errorCode || null,
+          details: info.details || null,
+        },
+      });
+
+      if (isComplete && fileResult?.location) {
+        const filename = fileResult.location.split('/').pop();
+        if (filename) {
+          const existing = await this.prisma.sessionRecording.findFirst({ where: { sessionId, filename } });
+          if (!existing) {
+            await this.prisma.sessionRecording.create({ data: { sessionId, filename } });
+          }
+          this.logger.log(`Recording saved for session ${sessionId}: ${filename}`);
+        }
+      } else if (!isComplete) {
+        this.logger.warn(`Egress ${statusName} for session ${sessionId} | error: ${info.error || '(none)'}`);
+      }
+
+      await this.prisma.session.update({
+        where: { id: sessionId },
+        data: { egressActive: false, egressId: null },
+      });
+    }
   }
 
   // ── Status ─────────────────────────────────────────────────────────────────
