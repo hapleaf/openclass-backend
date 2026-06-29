@@ -7,6 +7,7 @@ import {
   EgressClient, EgressStatus,
   EncodedFileOutput, EncodedFileType,
   S3Upload,
+  StreamOutput,
   WebhookReceiver,
 } from 'livekit-server-sdk';
 
@@ -212,6 +213,8 @@ export class LiveService implements OnModuleInit {
       roomName,
       isOrganizer,
       isRecording: session.egressActive,
+      isStreaming: !!session.streamEgresses,
+      streamingPlatforms: session.streamEgresses ? Object.keys(JSON.parse(session.streamEgresses)) : [],
       sessionInfo: {
         id: session.id,
         title: session.title,
@@ -300,7 +303,7 @@ export class LiveService implements OnModuleInit {
 
     await this.prisma.session.update({
       where: { id: sessionId },
-      data: { sessionStatus: 'COMPLETED', actualDuration, qualityFlag, egressActive: false, egressId: null },
+      data: { sessionStatus: 'COMPLETED', actualDuration, qualityFlag, egressActive: false, egressId: null, streamEgresses: null },
     });
 
     // Stop any active egress so the MP4 is finalised and the webhook fires
@@ -464,7 +467,7 @@ export class LiveService implements OnModuleInit {
           backupStorageUsed: info.backupStorageUsed ?? false,
           filename: fileResult?.filename ?? null,
           fileSizeBytes: fileResult?.size ?? null,
-          fileDurationSec: fileResult?.duration ? Number(fileResult.duration) : null,
+          fileDurationSec: fileResult?.duration ? Math.round(Number(fileResult.duration) / 1_000_000_000) : null,
           fileLocation: fileResult?.location ?? null,
           error: info.error || null,
           errorCode: info.errorCode || null,
@@ -483,7 +486,7 @@ export class LiveService implements OnModuleInit {
           backupStorageUsed: info.backupStorageUsed ?? false,
           filename: fileResult?.filename ?? null,
           fileSizeBytes: fileResult?.size ?? null,
-          fileDurationSec: fileResult?.duration ? Number(fileResult.duration) : null,
+          fileDurationSec: fileResult?.duration ? Math.round(Number(fileResult.duration) / 1_000_000_000) : null,
           fileLocation: fileResult?.location ?? null,
           error: info.error || null,
           errorCode: info.errorCode || null,
@@ -716,6 +719,108 @@ export class LiveService implements OnModuleInit {
           data: { sessionStatus: 'COMPLETED', actualDuration, qualityFlag },
         });
       }
+    }
+  }
+
+  // ── RTMP streaming ────────────────────────────────────────────────────────
+
+  async startStream(sessionId: number, userId: number, platforms: string[]) {
+    const session = await this.prisma.session.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException('Session not found');
+    if (session.userId !== userId) throw new ForbiddenException('Only the organizer can start streaming');
+    if (session.streamEgresses) throw new BadRequestException('A stream is already active for this session');
+
+    const integrations = await this.prisma.streamIntegration.findMany({
+      where: { userId, platform: { in: platforms } },
+    });
+    if (!integrations.length) throw new BadRequestException('No stream integrations found for selected platforms');
+
+    // Start one egress per platform in parallel so each can be tracked independently
+    const results = await Promise.all(
+      integrations.map(async (i: { platform: string; rtmpUrl: string; streamKey: string }) => {
+        const url = `${i.rtmpUrl.replace(/\/$/, '')}/${i.streamKey}`;
+        const egress = await this.egressClient().startRoomCompositeEgress(
+          `session-${sessionId}`,
+          new StreamOutput({ urls: [url] }),
+          { layout: 'single-speaker-dark' },
+        );
+        this.logger.log(`Stream egress started | session=${sessionId} platform=${i.platform} egressId=${egress.egressId}`);
+        return { platform: i.platform, egressId: egress.egressId };
+      }),
+    );
+
+    const egressMap: Record<string, string> = {};
+    results.forEach(({ platform, egressId }: { platform: string; egressId: string }) => { egressMap[platform] = egressId; });
+
+    await this.prisma.session.update({
+      where: { id: sessionId },
+      data: { streamEgresses: JSON.stringify(egressMap) },
+    });
+
+    return { ok: true, platforms: Object.keys(egressMap) };
+  }
+
+  async stopStream(sessionId: number, userId: number) {
+    const session = await this.prisma.session.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException('Session not found');
+    if (session.userId !== userId) throw new ForbiddenException('Only the organizer can stop streaming');
+    if (!session.streamEgresses) throw new BadRequestException('No active stream to stop');
+
+    const egressMap: Record<string, string> = JSON.parse(session.streamEgresses);
+
+    // Stop each platform egress independently — don't let one failure block others
+    await Promise.all(
+      Object.entries(egressMap).map(async ([platform, egressId]) => {
+        try {
+          await this.egressClient().stopEgress(egressId);
+        } catch (err) {
+          this.logger.warn(`stopEgress failed | platform=${platform} egressId=${egressId}: ${err}`);
+        }
+      }),
+    );
+
+    await this.prisma.session.update({
+      where: { id: sessionId },
+      data: { streamEgresses: null },
+    });
+
+    this.logger.log(`All stream egresses stopped for session ${sessionId}`);
+    return { ok: true };
+  }
+
+  async getStreamStatus(sessionId: number) {
+    const session = await this.prisma.session.findUnique({ where: { id: sessionId } });
+    if (!session || !session.streamEgresses) return { platforms: {}, anyActive: false };
+
+    const egressMap: Record<string, string> = JSON.parse(session.streamEgresses);
+    const STATUS: Record<number, string> = { 0: 'STARTING', 1: 'ACTIVE', 2: 'ENDING', 3: 'COMPLETE', 4: 'FAILED', 5: 'ABORTED', 6: 'LIMIT_REACHED' };
+    const DONE = new Set(['COMPLETE', 'FAILED', 'ABORTED', 'LIMIT_REACHED']);
+
+    try {
+      const egresses = await this.egressClient().listEgress({ roomName: `session-${sessionId}` });
+      const byId = new Map(egresses.map((e) => [e.egressId, e]));
+
+      const platformStatuses: Record<string, string> = {};
+      let anyActive = false;
+      let allDone = true;
+
+      for (const [platform, egressId] of Object.entries(egressMap)) {
+        const egress = byId.get(egressId);
+        if (!egress) { platformStatuses[platform] = 'IDLE'; continue; }
+        const status = STATUS[egress.status] ?? 'UNKNOWN';
+        platformStatuses[platform] = status;
+        if (status === 'ACTIVE') anyActive = true;
+        if (!DONE.has(status)) allDone = false;
+      }
+
+      // All platforms done — clear the map so the Go Live button re-enables
+      if (allDone) {
+        await this.prisma.session.update({ where: { id: sessionId }, data: { streamEgresses: null } });
+      }
+
+      return { platforms: platformStatuses, anyActive };
+    } catch {
+      return { platforms: Object.fromEntries(Object.keys(egressMap).map((p) => [p, 'UNKNOWN'])), anyActive: false };
     }
   }
 

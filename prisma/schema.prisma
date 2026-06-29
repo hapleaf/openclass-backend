@@ -211,6 +211,7 @@ model Session {
   actualStartAt   DateTime? // when organizer first joined
   egressId        String?   // LiveKit egress ID while recording is active
   egressActive    Boolean   @default(false) // true while egress is running
+  streamEgresses  String?   // JSON map { platform: egressId } — one egress per platform
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -308,6 +309,20 @@ model EgressLog {
 
   @@index([sessionId])
   @@index([createdAt])
+}
+
+model StreamIntegration {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  platform    String   // "facebook" | "youtube"
+  rtmpUrl     String   // base RTMP server URL
+  streamKey   String   @db.Text
+  label       String?  // optional friendly name e.g. "My YouTube Channel"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, platform])
+  @@index([userId])
 }
 
 model SupportTicket {

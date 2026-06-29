@@ -503,4 +503,46 @@ export class ProfileService {
       }
     }
   }
+
+  // ── Stream integrations ────────────────────────────────────────────────────
+
+  async getStreamIntegrations(userId: number) {
+    const rows = await this.prisma.streamIntegration.findMany({
+      where: { userId },
+      orderBy: { platform: 'asc' },
+    });
+    // Mask stream key — return last 6 chars only for display
+    return rows.map((r: typeof rows[number]) => ({
+      ...r,
+      streamKeyMasked: r.streamKey ? '••••••••' + r.streamKey.slice(-6) : '',
+    }));
+  }
+
+  async upsertStreamIntegration(
+    userId: number,
+    platform: string,
+    data: { rtmpUrl: string; streamKey: string; label?: string },
+  ) {
+    const allowed = ['facebook', 'youtube', 'linkedin', 'x', 'instagram'];
+    if (!allowed.includes(platform)) throw new BadRequestException('Unsupported platform');
+    if (!data.rtmpUrl?.trim()) throw new BadRequestException('Stream URL is required');
+
+    const streamKey = data.streamKey?.trim();
+    const existing = await this.prisma.streamIntegration.findUnique({
+      where: { userId_platform: { userId, platform } },
+    });
+    if (!streamKey && !existing) throw new BadRequestException('Stream key is required');
+
+    const result = await this.prisma.streamIntegration.upsert({
+      where: { userId_platform: { userId, platform } },
+      create: { userId, platform, rtmpUrl: data.rtmpUrl.trim(), streamKey: streamKey!, label: data.label?.trim() || null },
+      update: { rtmpUrl: data.rtmpUrl.trim(), ...(streamKey ? { streamKey } : {}), label: data.label?.trim() || null },
+    });
+    return { ...result, streamKeyMasked: '••••••••' + result.streamKey.slice(-6) };
+  }
+
+  async deleteStreamIntegration(userId: number, platform: string) {
+    await this.prisma.streamIntegration.deleteMany({ where: { userId, platform } });
+    return { ok: true };
+  }
 }

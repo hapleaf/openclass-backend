@@ -16,7 +16,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as net from 'net';
 import * as os from 'os';
-import { RoomServiceClient } from 'livekit-server-sdk';
+import { RoomServiceClient, EgressClient, EgressStatus } from 'livekit-server-sdk';
 
 const execAsync = promisify(exec);
 
@@ -560,5 +560,83 @@ export class RecordingService implements OnModuleInit {
       ...l,
       fileSizeBytes: l.fileSizeBytes ? Number(l.fileSizeBytes) : null,
     }));
+  }
+
+  async syncEgressLogsFromLiveKit(): Promise<{ updated: number; markedAborted: number; errors: string[] }> {
+    const apiKey    = this.config.get<string>('LIVEKIT_API_KEY')    ?? 'devkey';
+    const apiSecret = this.config.get<string>('LIVEKIT_API_SECRET') ?? 'secret';
+    const lkUrl     = this.config.get<string>('LIVEKIT_URL')        ?? 'ws://localhost:7880';
+    const httpUrl   = lkUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
+    const client    = new EgressClient(httpUrl, apiKey, apiSecret);
+
+    const STATUS: Record<number, string> = {
+      [EgressStatus.EGRESS_STARTING]:      'EGRESS_STARTING',
+      [EgressStatus.EGRESS_ACTIVE]:        'EGRESS_ACTIVE',
+      [EgressStatus.EGRESS_ENDING]:        'EGRESS_ENDING',
+      [EgressStatus.EGRESS_COMPLETE]:      'EGRESS_COMPLETE',
+      [EgressStatus.EGRESS_FAILED]:        'EGRESS_FAILED',
+      [EgressStatus.EGRESS_ABORTED]:       'EGRESS_ABORTED',
+      [EgressStatus.EGRESS_LIMIT_REACHED]: 'EGRESS_LIMIT_REACHED',
+    };
+
+    const nanoToDate = (ns: bigint | number | undefined): Date | null => {
+      if (!ns) return null;
+      const ms = Number(ns) / 1_000_000;
+      return ms > 0 ? new Date(ms) : null;
+    };
+
+    // Find DB rows stuck in active states
+    const staleLogs = await this.prisma.egressLog.findMany({
+      where: { status: { in: ['EGRESS_STARTING', 'EGRESS_ACTIVE', 'EGRESS_ENDING'] } },
+    });
+
+    let updated = 0;
+    let markedAborted = 0;
+    const errors: string[] = [];
+
+    for (const row of staleLogs) {
+      try {
+        // Query LiveKit by specific egressId — works even for recently-ended egresses
+        const lkList = await client.listEgress({ egressId: row.egressId });
+        const lk = lkList[0];
+
+        if (!lk) {
+          // Not in LiveKit at all — it ended without a webhook. Mark as aborted.
+          await this.prisma.egressLog.update({
+            where: { id: row.id },
+            data: {
+              status: 'EGRESS_ABORTED',
+              error: 'Egress ended silently — no webhook received and no longer visible in LiveKit',
+            },
+          });
+          markedAborted++;
+          continue;
+        }
+
+        const fileResult = lk.fileResults?.[0];
+        await this.prisma.egressLog.update({
+          where: { id: row.id },
+          data: {
+            status: STATUS[lk.status] ?? row.status,
+            recordingStartedAt: nanoToDate(lk.startedAt) ?? row.recordingStartedAt,
+            recordingEndedAt:   nanoToDate(lk.endedAt)   ?? row.recordingEndedAt,
+            lkUpdatedAt:        nanoToDate(lk.updatedAt) ?? row.lkUpdatedAt,
+            retryCount:         lk.retryCount ?? row.retryCount,
+            filename:           fileResult?.filename ?? row.filename,
+            fileSizeBytes:      fileResult?.size ? BigInt(fileResult.size) : row.fileSizeBytes,
+            fileDurationSec:    fileResult?.duration ? Math.round(Number(fileResult.duration) / 1_000_000_000) : row.fileDurationSec,
+            fileLocation:       fileResult?.location ?? row.fileLocation,
+            error:              lk.error || row.error,
+            errorCode:          lk.errorCode || row.errorCode,
+          },
+        });
+        updated++;
+      } catch (e) {
+        errors.push(`${row.egressId}: ${e}`);
+      }
+    }
+
+    this.logger.log(`syncEgressLogsFromLiveKit: updated=${updated} markedAborted=${markedAborted} errors=${errors.length}`);
+    return { updated, markedAborted, errors };
   }
 }

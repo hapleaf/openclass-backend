@@ -98,6 +98,31 @@ export class LiveController {
     return { ok: true };
   }
 
+  @Get(':id/stream-status')
+  @UseGuards(JwtGuard)
+  getStreamStatus(@Param('id', ParseIntPipe) id: number) {
+    return this.liveService.getStreamStatus(id);
+  }
+
+  @Post(':id/start-stream')
+  @UseGuards(JwtGuard)
+  startStream(
+    @Req() req: { user: { sub: number } },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { platforms: string[] },
+  ) {
+    return this.liveService.startStream(id, req.user.sub, body.platforms);
+  }
+
+  @Post(':id/stop-stream')
+  @UseGuards(JwtGuard)
+  stopStream(
+    @Req() req: { user: { sub: number } },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.liveService.stopStream(id, req.user.sub);
+  }
+
   @Post(':id/rate')
   @UseGuards(JwtGuard)
   rateSession(

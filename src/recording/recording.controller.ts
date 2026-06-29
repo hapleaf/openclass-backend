@@ -78,4 +78,9 @@ export class RecordingController {
   getEgressLogs(@Query('status') status?: string) {
     return this.recording.getEgressLogs(status);
   }
+
+  @Post('egress-logs/sync')
+  syncEgressLogs() {
+    return this.recording.syncEgressLogsFromLiveKit();
+  }
 }

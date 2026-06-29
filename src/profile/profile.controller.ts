@@ -2,11 +2,13 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UploadedFile,
@@ -114,6 +116,33 @@ export class ProfileController {
     @Body() dto: CreateReviewDto,
   ) {
     return this.profileService.createReview(req.user.sub, teacherId, dto.rating, dto.comment);
+  }
+
+  // ── Stream integrations ────────────────────────────────────────────────────
+
+  @Get('stream-integrations')
+  @UseGuards(JwtGuard)
+  getStreamIntegrations(@Req() req: { user: { sub: number } }) {
+    return this.profileService.getStreamIntegrations(req.user.sub);
+  }
+
+  @Put('stream-integrations/:platform')
+  @UseGuards(JwtGuard)
+  upsertStreamIntegration(
+    @Req() req: { user: { sub: number } },
+    @Param('platform') platform: string,
+    @Body() body: { rtmpUrl: string; streamKey: string; label?: string },
+  ) {
+    return this.profileService.upsertStreamIntegration(req.user.sub, platform, body);
+  }
+
+  @Delete('stream-integrations/:platform')
+  @UseGuards(JwtGuard)
+  deleteStreamIntegration(
+    @Req() req: { user: { sub: number } },
+    @Param('platform') platform: string,
+  ) {
+    return this.profileService.deleteStreamIntegration(req.user.sub, platform);
   }
 
   @Post('avatar')
